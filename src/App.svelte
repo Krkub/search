@@ -11,7 +11,7 @@
         let file = await fs.readTextFile(path);
         data = JSON.parse(file);
         fields = Object.keys(data[0]).map((f) => {
-          return { name: f, stored: false };
+          return { name: f, stored: true };
         });
       }
     } else if (e.payload === "save-event") {
@@ -25,7 +25,7 @@
   });
   let fields: HeadData[] = [];
   function field_push() {
-    fields.push({ name: "", stored: false });
+    fields.push({ name: "", stored: true });
     fields = fields;
   }
   let data: Object[] = [];
@@ -38,15 +38,49 @@
     name: string;
     stored: boolean;
   }
+
+  let query = "query";
+  let limit = 10;
+  let result: Promise<
+    {
+      field_values: { field_values: { field: number; value: string }[] };
+      score: number;
+    }[]
+  >;
+  $: console.log(result);
 </script>
 
 <header>
+  <input type="text" bind:value={query} />
+  <input type="number" bind:value={limit} />
+  <button
+    on:click={() =>
+      (result = invoke("search_index", { queryS: query, limit: limit }))}
+    >search</button
+  >
+</header>
+<div>
+  {#await result}
+    Searching...
+  {:then res}
+    {#if res}
+      {#each res as field}
+      {#each field.field_values.field_values as data}
+        {data.value} <br>
+      {/each}
+        {field.score}
+      {/each}
+      <p>found</p>
+    {/if}
+  {/await}
+</div>
+<section>
   {#each fields as field}
     <input type="text" bind:value={field.name} />
     <input type="checkbox" bind:checked={field.stored} />
   {/each}
   <button on:click={field_push}>+</button>
-</header>
+</section>
 {#await indexing}
   <p>Laoding..</p>
 {:then res}

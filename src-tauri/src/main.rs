@@ -4,7 +4,7 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use serde::Deserialize;
-use tantivy::{doc, schema::*, Index};
+use tantivy::{collector::TopDocs, doc, query::QueryParser, schema::*, Index, ReloadPolicy};
 use tauri::{generate_handler, CustomMenuItem, Menu, Submenu, WindowMenuEvent};
 fn main() {
     tauri::Builder::default()
@@ -18,7 +18,7 @@ fn main() {
         )
         .on_menu_event(os_menu_handler)
         .manage(MyState::default())
-        .invoke_handler(generate_handler![index_data])
+        .invoke_handler(generate_handler![index_data, search_index])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -40,6 +40,7 @@ struct HeadData {
 struct MyState {
     //head: Mutex<Vec<HeadData>>,
     index: Mutex<Option<Index>>,
+    schema: Mutex<Option<Schema>>,
 }
 // remember to call `.manage(MyState::default())`
 #[tauri::command]
@@ -63,7 +64,61 @@ fn index_data(
         index_writer.add_document(doc).expect("indexing arror");
     }
     index_writer.commit().expect("indaxing err");
+    let mut s_schema = state.schema.lock().unwrap();
+    *s_schema = Some(schema);
     let mut s_index = state.index.lock().unwrap();
     *s_index = Some(index);
     Ok(())
+}
+// remember to call `.manage(MyState::default())`
+#[tauri::command]
+fn search_index(
+    state: tauri::State<'_, MyState>,
+    query_s: String,
+    limit: usize,
+) -> Result<Vec<SearchData>, String> {
+    let index_m = (*state.index.lock().unwrap()).clone();
+    match index_m {
+        Some(e) => {
+            let reader = e
+                .reader_builder()
+                .reload_policy(ReloadPolicy::OnCommit)
+                .try_into()
+                .expect("something went wrong");
+            let schema_m = (*state.schema.lock().unwrap()).clone();
+            let searcher = reader.searcher();
+            let query_parser = QueryParser::for_index(
+                &e,
+                schema_m
+                    .expect("no_schema")
+                    .fields()
+                    .map(|f| {
+                        let (field, _) = f;
+                        field
+                    })
+                    .collect(),
+            );
+            let query = query_parser
+                .parse_query(&query_s)
+                .expect("qery parsing error");
+            let top_docs = searcher
+                .search(&query, &TopDocs::with_limit(limit))
+                .unwrap();
+            let mut res: Vec<SearchData> = Vec::new();
+            for (score, doc_address) in top_docs {
+                res.push(SearchData {
+                    field_values: searcher.doc(doc_address).expect("something went wrong"),
+                    score,
+                });
+            }
+            Ok(res)
+        }
+        None => Err("no index".to_string()),
+    }
+}
+
+#[derive(serde::Serialize)]
+struct SearchData {
+    field_values: Document,
+    score: f32,
 }
