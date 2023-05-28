@@ -1,102 +1,55 @@
-<script lang="ts" type="module">
-  import { event, dialog, fs, invoke } from "@tauri-apps/api";
-  event.listen<string>("menu-event", async (e) => {
-    console.log(e);
-    if (e.payload === "open-event") {
-      let path = await dialog.open({
-        multiple: false,
-        filters: [{ extensions: ["json"], name: "data" }],
-      });
-      if (!Array.isArray(path) && path) {
-        let file = await fs.readTextFile(path);
-        data = JSON.parse(file);
-        fields = Object.keys(data[0]).map((f) => {
-          return { name: f, stored: true };
-        });
-      }
-    } else if (e.payload === "save-event") {
-      let path = await dialog.save({
-        filters: [{ name: "data", extensions: ["json"] }],
-      });
-      if (path) {
-        await fs.writeTextFile(path, JSON.stringify(data));
-      }
-    }
-  });
-  let fields: HeadData[] = [];
-  function field_push() {
-    fields.push({ name: "", stored: true });
-    fields = fields;
-  }
-  let data: Object[] = [];
-  function map_push() {
-    data.push(new Object());
-    data = data;
-  }
-  $: indexing = invoke("index_data", { head: fields, body: data });
-  interface HeadData {
-    name: string;
-    stored: boolean;
-  }
+<script lang="ts">
+  import { event, invoke } from "@tauri-apps/api";
+  import { onMount } from "svelte";
+  import Schema from "./lib/Schema.svelte";
+  import Data from "./lib/Data.svelte";
+  import SearchBar from "./lib/Bar.svelte";
 
-  let query = "query";
-  let limit = 10;
-  let result: Promise<
-    {
-      field_values: { field_values: { field: number; value: string }[] };
-      score: number;
-    }[]
-  >;
-  $: console.log(result);
+  let page = 1;
+  let page_len = 100;
+  $: start = (page - 1) * page_len;
+  $: end = page * page_len;
+  let len = 0;
+  $: pages = Math.ceil(len / page_len);
+  let data: Object[] = [];
+  let schema = [""];
+  let indexing: Promise<unknown>;
+  let gen = 1_000_0;
+  onMount(async () => {
+    ({ data, len } = await invoke<{ data: Object[]; len: number }>(
+      "fetch_data",
+      { start, end }
+    ));
+    schema = Object.keys(data[0]);
+  });
+  event.listen("data_mutate", async (e) => {
+    console.log(e);
+    ({ data, len } = await invoke<{ data: Object[]; len: number }>(
+      "fetch_data",
+      { start, end }
+    ));
+    schema = Object.keys(data[0]);
+    event.emit("index");
+  });
+  event.listen("index", (e) => {
+    console.log("ev");
+    indexing = invoke("index_data", { head: schema });
+  });
 </script>
 
-<header>
-  <input type="text" bind:value={query} />
-  <input type="number" bind:value={limit} />
-  <button
-    on:click={() =>
-      (result = invoke("search_index", { queryS: query, limit: limit }))}
-    >search</button
-  >
-</header>
-<div>
-  {#await result}
-    Searching...
-  {:then res}
-    {#if res}
-      {#each res as field}
-      {#each field.field_values.field_values as data}
-        {data.value} <br>
-      {/each}
-        {field.score}
-      {/each}
-      <p>found</p>
-    {/if}
-  {/await}
-</div>
-<section>
-  {#each fields as field}
-    <input type="text" bind:value={field.name} />
-    <input type="checkbox" bind:checked={field.stored} />
-  {/each}
-  <button on:click={field_push}>+</button>
-</section>
-{#await indexing}
-  <p>Laoding..</p>
-{:then res}
-  <p>{res}</p>
-{/await}
 <main>
-  {#each data as item}
-    {#each fields as field}
-      <input
-        type="text"
-        bind:value={item[field.name]}
-        placeholder={field.name}
-      />
-    {/each}
-  {/each}
-  <button on:click={map_push}>+</button>
+  <SearchBar /> <br />
+  <button
+    on:click={async () => {
+      schema = ["first_name", "last_name", "job", "bio", "company"];
+      await invoke("add_fake", { len: gen });
+      console.log("dez");
+      event.emit("data_mutate","faker");
+    }}>add</button
+  >
+  <input type="number" bind:value={gen} />
+  <Schema bind:schema /><br />
+  <Data bind:data {schema} />
 </main>
 
 <style>
